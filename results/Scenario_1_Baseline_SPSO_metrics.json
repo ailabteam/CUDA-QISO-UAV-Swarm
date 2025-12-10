@@ -1,9 +1,0 @@
-{
-    "algorithm": "SPSO",
-    "scenario": "Scenario_1_Baseline",
-    "gbest_fitness": 5907.10693359375,
-    "total_time_s": 2.128427267074585,
-    "n_particles": 200,
-    "max_iter": 500,
-    "N_uavs": 4
-}

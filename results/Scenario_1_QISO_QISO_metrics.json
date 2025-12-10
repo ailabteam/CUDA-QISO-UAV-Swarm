@@ -1,9 +1,0 @@
-{
-    "algorithm": "QISO",
-    "scenario": "Scenario_1_QISO",
-    "gbest_fitness": 9255.175939328918,
-    "total_time_s": 1.649116039276123,
-    "n_particles": 200,
-    "max_iter": 500,
-    "N_uavs": 4
-}
