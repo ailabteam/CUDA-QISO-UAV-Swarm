@@ -4,27 +4,29 @@ import cupy as cp
 import time
 import matplotlib.pyplot as plt
 import numpy as np
+import os
+import json
 
-# Sử dụng cú pháp import package
 from src.Environment import UAV_Environment
 from src.QISO_Core import QISO_Optimizer
-from data.config_scenario1 import SCENARIO_CONFIG
+from data.config_scenario1 import SCENARIO_CONFIG as CONFIG_1
+# Tạm thời import config 1 để chạy thử, sau này sẽ thay đổi bằng tham số đầu vào
 
 def run_simulation(config):
     
     qiso_params = config['qiso_params']
+    algo_type = "QISO" if qiso_params.get('is_qiso', True) else "SPSO"
+    qiso_params['algo_type'] = algo_type
     
-    print(f"--- Starting Simulation: {qiso_params['simulation_name']} ---")
+    print(f"--- Starting Simulation: {qiso_params['simulation_name']} [{algo_type}] ---")
     
-    # 1. Khởi tạo Môi trường (Truyền toàn bộ config)
     env = UAV_Environment(
         N_uavs=config['sim_params']['N_uavs'], 
         N_waypoints=config['sim_params']['N_waypoints'], 
-        config=config, # Truyền toàn bộ SCENARIO_CONFIG
+        config=config, 
         cp=cp
     )
     
-    # 2. Khởi tạo QISO Optimizer
     optimizer = QISO_Optimizer(
         env=env, 
         N_particles=qiso_params['N_particles'], 
@@ -33,22 +35,40 @@ def run_simulation(config):
         cp=cp
     )
     
-    # 3. Chạy Tối ưu hóa
     start_time = time.time()
     gbest_position, gbest_fitness = optimizer.optimize()
     end_time = time.time()
     
+    total_time = end_time - start_time
+    
     print("\n--- Optimization Complete ---")
     print(f"Final G_Best Fitness: {gbest_fitness:.4f}")
-    print(f"Total time: {end_time - start_time:.2f} seconds")
-    
-    return gbest_position, gbest_fitness, env.N_uavs, env.N_waypoints, qiso_params
+    print(f"Total time: {total_time:.2f} seconds")
 
-def visualize_results(gbest_pos, N_uavs, N_waypoints, config, qiso_params):
+    metrics = {
+        "algorithm": algo_type,
+        "scenario": qiso_params['simulation_name'],
+        "gbest_fitness": float(gbest_fitness),
+        "total_time_s": total_time,
+        "n_particles": qiso_params['N_particles'],
+        "max_iter": qiso_params['max_iter'],
+        "N_uavs": config['sim_params']['N_uavs'],
+        # Thêm các metrics khác sau này (ví dụ: log hội tụ)
+    }
     
-    # ... (giữ nguyên logic visualize) ...
+    return gbest_position, metrics, env.N_uavs, env.N_waypoints, config
+
+def save_metrics(metrics):
+    filename = f"results/{metrics['scenario']}_{metrics['algorithm']}_metrics.json"
+    with open(filename, 'w') as f:
+        json.dump(metrics, f, indent=4)
+    print(f"Saved metrics to {filename}")
+
+def visualize_results(gbest_pos, N_uavs, N_waypoints, config, metrics):
+    
     path = gbest_pos.reshape(N_uavs, N_waypoints, 3)
     
+    # ... (Logic vẽ đồ thị 3D giữ nguyên) ...
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection='3d')
 
@@ -56,7 +76,6 @@ def visualize_results(gbest_pos, N_uavs, N_waypoints, config, qiso_params):
     obs_data = np.array(config['obstacles_data'])
     for i in range(obs_data.shape[0]):
         center = obs_data[i, :3]
-        radius = obs_data[i, 3]
         ax.scatter(center[0], center[1], center[2], color='red', marker='o', s=100)
 
     # Vẽ Quỹ đạo UAV
@@ -64,20 +83,15 @@ def visualize_results(gbest_pos, N_uavs, N_waypoints, config, qiso_params):
         ax.plot(path[i, :, 0], path[i, :, 1], path[i, :, 2], marker='.', 
                 linestyle='-', label=f'UAV {i+1}')
         
-        # Điểm bắt đầu
         start_pos = config['sim_params']['start_pos'][i]
         ax.scatter(start_pos[0], start_pos[1], start_pos[2], 
-                   marker='s', color='green', s=50, label='Start' if i == 0 else "")
-        # Điểm kết thúc (Waypoint cuối cùng)
-        ax.scatter(path[i, -1, 0], path[i, -1, 1], path[i, -1, 2], 
-                   marker='x', color='blue', s=50, label='End' if i == 0 else "")
-    
+                   marker='s', color='green', s=50)
+
     # Vẽ các mục tiêu nhiệm vụ (Mission Targets)
     mission_targets = np.array(config['mission_targets'])
     for target in mission_targets:
         ax.scatter(target[0], target[1], target[2], marker='*', color='gold', s=150)
     
-    # Thiết lập giới hạn
     bounds = config['sim_params']['dimensions']
     ax.set_xlim(0, bounds[0])
     ax.set_ylim(0, bounds[1])
@@ -86,9 +100,9 @@ def visualize_results(gbest_pos, N_uavs, N_waypoints, config, qiso_params):
     ax.set_xlabel('X (m)')
     ax.set_ylabel('Y (m)')
     ax.set_zlabel('Z (m)')
-    ax.set_title(f"QISO Optimized Paths - {qiso_params['simulation_name']}")
+    ax.set_title(f"{metrics['algorithm']} Optimized Paths - {metrics['scenario']}")
     
-    output_filename = f"results/{qiso_params['simulation_name']}_path.pdf"
+    output_filename = f"results/{metrics['scenario']}_{metrics['algorithm']}_path.pdf"
     plt.savefig(output_filename, format='pdf')
     plt.close(fig) 
     print(f"Saved visualization to {output_filename}")
@@ -99,8 +113,26 @@ if __name__ == "__main__":
     # Thiết lập Matplotlib để chạy non-GUI
     plt.switch_backend('Agg') 
     
-    # Chạy mô phỏng
-    gbest_pos, gbest_fitness, N_uavs, N_waypoints, qiso_params = run_simulation(SCENARIO_CONFIG)
+    # --- CHẠY THỬ NGHIỆM SO SÁNH (SPSO vs QISO) TRONG KỊCH BẢN 1 ---
     
-    # Trực quan hóa kết quả
-    visualize_results(gbest_pos, N_uavs, N_waypoints, SCENARIO_CONFIG, qiso_params)
+    # 1. BASELINE: SPSO (Standard PSO)
+    config_spso = CONFIG_1.copy()
+    config_spso['qiso_params']['is_qiso'] = False
+    config_spso['qiso_params']['simulation_name'] = "Scenario_1_Baseline"
+    
+    gbest_pos_spso, metrics_spso, N_uavs, N_waypoints, config_used = run_simulation(config_spso)
+    save_metrics(metrics_spso)
+    visualize_results(gbest_pos_spso, N_uavs, N_waypoints, config_used, metrics_spso)
+    
+    print("-" * 50)
+    
+    # 2. PROPOSED: QISO (Quantum-Inspired PSO)
+    config_qiso = CONFIG_1.copy()
+    config_qiso['qiso_params']['is_qiso'] = True
+    config_qiso['qiso_params']['simulation_name'] = "Scenario_1_QISO"
+
+    gbest_pos_qiso, metrics_qiso, N_uavs, N_waypoints, config_used = run_simulation(config_qiso)
+    save_metrics(metrics_qiso)
+    visualize_results(gbest_pos_qiso, N_uavs, N_waypoints, config_used, metrics_qiso)
+    
+    # Note: Sau khi chạy thành công, chúng ta sẽ chuyển sang Kịch bản 2

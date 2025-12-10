@@ -8,23 +8,18 @@ import math
 THREADS_PER_BLOCK = 256
 
 @cuda.jit
-def static_collision_kernel(pos, obstacles, N_uavs, N_waypoints, obstacle_dim, penalty_value, result_f2):
+def static_collision_kernel(pos, obstacles, N_uavs, N_waypoints, obstacle_dim, penalty_base, result_f2):
+    """ Tính toán chi phí va chạm tĩnh. """
     
     idx = cuda.grid(1) 
     if idx < pos.shape[0]:
         total_penalty = 0.0
         
-        # total_dim = N_uavs * N_waypoints * 3
-        
-        # Lặp qua tất cả các waypoint của tất cả các UAV thuộc hạt idx
-        # Kích thước của pos[idx] là total_dim
         for i in range(N_uavs * N_waypoints):
-            # Lấy tọa độ waypoint (x, y, z)
             x_w = pos[idx, i * 3 + 0]
             y_w = pos[idx, i * 3 + 1]
             z_w = pos[idx, i * 3 + 2]
             
-            # Lặp qua tất cả chướng ngại vật
             for j in range(obstacle_dim):
                 x_o = obstacles[j, 0]
                 y_o = obstacles[j, 1]
@@ -34,31 +29,59 @@ def static_collision_kernel(pos, obstacles, N_uavs, N_waypoints, obstacle_dim, p
                 dist_sq = (x_w - x_o)**2 + (y_w - y_o)**2 + (z_w - z_o)**2
                 dist = math.sqrt(dist_sq)
 
-                # Nếu khoảng cách nhỏ hơn bán kính an toàn
                 if dist < r_o:
                     # Hàm phạt: Tăng lên khi vi phạm sâu hơn
-                    total_penalty += penalty_value * (r_o - dist)
+                    total_penalty += penalty_base * (r_o - dist)
         
-        result_f2[idx] = total_penalty
+        cuda.atomic.add(result_f2, idx, total_penalty) # Sử dụng atomic add để đảm bảo an toàn
+
+@cuda.jit
+def dynamic_collision_kernel(pos, N_uavs, N_waypoints, min_sep_sq, penalty_base, result_f2):
+    """
+    Tính toán chi phí va chạm động (giữa các UAV).
+    Kiểm tra khoảng cách giữa UAV_i và UAV_k tại cùng một thời điểm (waypoint j).
+    """
+    idx = cuda.grid(1)
+    if idx < pos.shape[0]:
+        total_dynamic_penalty = 0.0
+        min_sep = math.sqrt(min_sep_sq)
+        
+        # Lặp qua từng thời điểm (waypoint)
+        for j in range(N_waypoints):
+            # Lặp qua tất cả các cặp UAV (i, k)
+            for i in range(N_uavs):
+                for k in range(i + 1, N_uavs): # Chỉ kiểm tra i < k
+                    
+                    # Tính offset cho UAV i và k tại waypoint j
+                    offset_i = i * N_waypoints * 3 + j * 3
+                    offset_k = k * N_waypoints * 3 + j * 3
+                    
+                    x_i = pos[idx, offset_i + 0]
+                    y_i = pos[idx, offset_i + 1]
+                    z_i = pos[idx, offset_i + 2]
+                    
+                    x_k = pos[idx, offset_k + 0]
+                    y_k = pos[idx, offset_k + 1]
+                    z_k = pos[idx, offset_k + 2]
+                    
+                    dist_sq = (x_i - x_k)**2 + (y_i - y_k)**2 + (z_i - z_k)**2
+                    
+                    if dist_sq < min_sep_sq:
+                        dist = math.sqrt(dist_sq)
+                        # Hàm phạt va chạm động
+                        total_dynamic_penalty += penalty_base * (min_sep - dist)
+                        
+        cuda.atomic.add(result_f2, idx, total_dynamic_penalty)
 
 
-# Hàm tính toán Khoảng cách (f1: Energy/Time Cost) - CuPy Vectorization
 def calculate_f1_cupy(reshaped_pos):
-    """ reshaped_pos: (N_particles, N_uavs, N_waypoints, 3) """
-    
-    # Tính hiệu số giữa các waypoint liên tiếp (bỏ qua waypoint cuối)
+    """ Tính toán Khoảng cách (f1: Energy/Time Cost) - CuPy Vectorization """
     diff = reshaped_pos[:, :, 1:, :] - reshaped_pos[:, :, :-1, :]
-    
-    # Tính bình phương khoảng cách và căn bậc hai
     dist_sq = cp.sum(diff**2, axis=3)
-    
-    # Tính tổng quãng đường bay của tất cả UAV trong hạt
     distance_cost = cp.sum(cp.sqrt(dist_sq), axis=(1, 2))
     return distance_cost
 
-# Hàm tính toán F3 (Nhiệm vụ) - Hiện tại là placeholder
 def calculate_f3_cupy(reshaped_pos, mission_targets):
+    """ Tính toán F3 (Nhiệm vụ) - Hiện tại là placeholder """
     N_particles = reshaped_pos.shape[0]
-    # Placeholder: Giả định chi phí cố định cho Kịch bản 1 đơn giản
-    # Sẽ được phát triển trong Kịch bản 3
     return cp.zeros(N_particles, dtype=cp.float32)
