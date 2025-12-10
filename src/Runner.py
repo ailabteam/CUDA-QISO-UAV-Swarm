@@ -1,4 +1,4 @@
-# src/Runner.py (Phiên bản cuối: Hỗ trợ Log, Legend, và Convergence Plot)
+# src/Runner.py
 
 import cupy as cp
 import time
@@ -10,7 +10,7 @@ import json
 from src.Environment import UAV_Environment
 from src.QISO_Core import QISO_Optimizer
 from data.config_scenario1 import SCENARIO_CONFIG as CONFIG_1
-# Sẽ import CONFIG_2 trong phần main
+# Import CONFIG_2 sẽ được thực hiện trong __main__
 
 def run_simulation(config):
     
@@ -36,7 +36,6 @@ def run_simulation(config):
     )
     
     start_time = time.time()
-    # Nhận thêm history
     gbest_position, gbest_fitness, history = optimizer.optimize() 
     end_time = time.time()
     
@@ -62,8 +61,8 @@ def run_simulation(config):
 def save_metrics(metrics):
     filename = f"results/{metrics['scenario']}_{metrics['algorithm']}_metrics.json"
     
-    # Chuyển history thành list Python chuẩn trước khi lưu JSON
     metrics_to_save = metrics.copy()
+    # Chuyển đổi list history về list float trước khi lưu JSON
     metrics_to_save['convergence_history'] = [float(f) for f in metrics_to_save['convergence_history']]
     
     with open(filename, 'w') as f:
@@ -77,10 +76,8 @@ def visualize_results(gbest_pos, N_uavs, N_waypoints, config, metrics):
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')
 
-    # Vẽ Chướng ngại vật và Mission Targets (Đảm bảo Legend)
+    # 1. Chướng ngại vật Tĩnh
     obs_data = np.array(config['obstacles_data'])
-    
-    # 1. Chướng ngại vật Tĩnh (Màu Đỏ, marker tròn)
     is_first_obs = True
     for i in range(obs_data.shape[0]):
         center = obs_data[i, :3]
@@ -88,7 +85,7 @@ def visualize_results(gbest_pos, N_uavs, N_waypoints, config, metrics):
                    label='Static Obstacles' if is_first_obs else None)
         is_first_obs = False
 
-    # 2. Mục tiêu Nhiệm vụ (Màu Vàng, marker Ngôi sao)
+    # 2. Mục tiêu Nhiệm vụ (Ngôi sao vàng)
     mission_targets = np.array(config['mission_targets'])
     is_first_target = True
     for target in mission_targets:
@@ -98,9 +95,8 @@ def visualize_results(gbest_pos, N_uavs, N_waypoints, config, metrics):
     
     # 3. Quỹ đạo UAV
     for i in range(N_uavs):
-        # Đường đi
         ax.plot(path[i, :, 0], path[i, :, 1], path[i, :, 2], 
-                linestyle='-', linewidth=1.5, label=f'UAV {i+1}' if i == 0 else None)
+                linestyle='-', linewidth=1.5, label=f'UAV {i+1}' if i == 0 else None, alpha=0.7)
         
         # Điểm bắt đầu (marker vuông Xanh lá)
         start_pos = config['sim_params']['start_pos'][i]
@@ -133,9 +129,8 @@ def visualize_results(gbest_pos, N_uavs, N_waypoints, config, metrics):
 def visualize_convergence(history_spso, history_qiso, scenario_name):
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Chuyển đổi list (nếu cần) và vẽ
     ax.plot(history_spso, label='SPSO (Baseline)', color='blue', linewidth=2)
-    ax.plot(history_qiso, label='QISO-Chaos (Proposed)', color='red', linewidth=2, linestyle='--')
+    ax.plot(history_qiso, label='QISO-Dynamic (Proposed)', color='red', linewidth=2, linestyle='--')
     
     ax.set_title(f'Convergence Analysis - {scenario_name}')
     ax.set_xlabel('Iteration')
@@ -153,13 +148,13 @@ if __name__ == "__main__":
     
     plt.switch_backend('Agg') 
     
-    # CHẠY TRÊN KỊCH BẢN 2 (Môi trường động, quy mô lớn hơn)
+    # IMPORT KỊCH BẢN 2
     from data.config_scenario2 import SCENARIO_CONFIG_2 as CONFIG_TEST
     
     metrics_log = {'spso': None, 'qiso': None}
     history_log = {'spso': None, 'qiso': None}
 
-    # 1. BASELINE: SPSO trên KỊCH BẢN 2
+    # 1. BASELINE: SPSO trên KỊCH BẢN 2 (Tham số cố định)
     config_spso = CONFIG_TEST.copy()
     config_spso['qiso_params']['is_qiso'] = False
     config_spso['qiso_params']['simulation_name'] = "Scenario_2_Baseline"
@@ -172,11 +167,10 @@ if __name__ == "__main__":
     
     print("-" * 50)
     
-    # 2. PROPOSED: QISO (Chaos-Enhanced) trên KỊCH BẢN 2
+    # 2. PROPOSED: QISO (Chaos-Dynamic W, C1, C2) trên KỊCH BẢN 2
     config_qiso = CONFIG_TEST.copy()
     config_qiso['qiso_params']['is_qiso'] = True
-    config_qiso['qiso_params']['simulation_name'] = "Scenario_2_QISO_Chaos"
-    config_qiso['qiso_params']['chaos_mu'] = 4.0
+    config_qiso['qiso_params']['simulation_name'] = "Scenario_2_QISO_DynamicW" 
     
     gbest_pos_qiso, metrics_qiso, N_uavs, N_waypoints, config_used = run_simulation(config_qiso)
     save_metrics(metrics_qiso)
